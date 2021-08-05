@@ -1,0 +1,356 @@
+library(Boom)
+library(zoo)
+library(bsts)
+#library("writexl")
+library(reshape2)
+options(scipen=999)
+#for plotting dynamic coefficients
+library(matrixStats)
+library(purrr)
+library(ggplot2)
+library(tibble)
+library(dplyr)
+library(tibble)
+library(dplyr)
+library(gt)
+library(Metrics)
+
+urlfile<-'https://raw.githubusercontent.com/chy-test/pmproject/main/data_BTC.csv'
+btc<-read.csv(urlfile)
+
+#table of static coefficients with uninformative prior
+btc_z <- read.zoo(btc)
+### Scaled data ###
+btcds <- scale(btc_z)
+ssc <- AddLocalLinearTrend(list(), btcds$btc_usd)
+
+# iter large enough, the first important regressors seem to be similar
+#uninformative prior, meaning that we dont put any priors
+LLTTIS <- bsts(btc_usd ~ .,
+               state.specification = ssc,
+               niter = 10000,
+               seed = 2021,
+               data = btcds,
+               expected.model.size = 20)  # Passed to SpikeSlabPrior.
+plot(LLTTIS, "coef")
+burn <- SuggestBurn(0.1, LLTTIS)
+#Calculate the inclusion probabilities. Maybe some other statistics we want to report more
+inclusionprobs_LLTTIS <- melt(colMeans(LLTTIS$coefficients[-(1:burn),] != 0))
+#calculate the mean of coefficents and take them as the prior means
+inclusionprobs_LLTTIS$mean <- colMeans(LLTTIS$coefficients)
+inclusionprobs_LLTTIS$Variable <- as.character(row.names(inclusionprobs_LLTTIS))
+mean_coef_LLTTIS <- colMeans(LLTTIS$coefficients)
+q_2.5 <- matrixStats::colQuantiles(LLTTIS$coefficients, probs = c(0.025))
+q_97.5 <- matrixStats::colQuantiles(LLTTIS$coefficients, probs = c(0.975))
+inclusionprobs_LLTTIS$Variable <- c("Intercept","Confirmation time", "Exchange trade volume", "Hash rate", "Trans excl. popular", "My wallet trans.", "VIX", "S&P500", "Gold price", "Silver price", "Bearish", "Yuan-USD exchange rate", "GBP-USD exchange rate", "RUB-USD exchange rate", "United States", "China", "Nigeria", "South Africa", "Venezuela", "Colombia", "Bolivia","Corona", "Elon Musk")
+mean_coef_LLTTIS <- 
+  tibble(
+    Variable = inclusionprobs_LLTTIS$Variable,
+    Mean = round(mean_coef_LLTTIS, 3),
+    quantile_2.5 = round(q_2.5, 3),
+    quantile_97.5 = round(q_97.5,3),
+    Inclusion_probability = round(inclusionprobs_LLTTIS$value, 3)
+  )
+gt_tbl <- gt(mean_coef_LLTTIS)
+gt_tbl <- 
+  gt_tbl %>%
+  cols_label(
+    quantile_2.5 = html("2.5%"),
+    quantile_97.5 = html("97.5%"),
+    Inclusion_probability = html("Inclusion probability")
+  )
+#table of static coefficients with SS prior with 2021 seed
+#Design the priors
+#Including Prior Expectations in the Model, need to include for intercept
+prior.spikes <- c(0.05,0.05,0.05,0.05,0.05,0.05,1,1,1,1,0.05,1, 0.05, 1, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 1, 1)
+prior.mean <- c(0,0,0,0,0,0,-0.0488,-0.008,-0.0549,0.04586,0,-0.0633, 0, 0.0360, 0, 0, 0, 0, 0, 0, 0, 0.0187, 0.0067)
+
+### Set up the priors
+#Q: if we change prior, should we change this prior.information.weight = 200? what is it?
+#Setting the prior
+prior <- SpikeSlabPrior(x=model.matrix(btcds$btc_usd ~ ., data=btcds), 
+                        y=btcds$btc_usd,
+                        prior.inclusion.probabilities = prior.spikes,
+                        optional.coefficient.estimate = prior.mean)
+LLTTIS_SS <- bsts(btcds$btc_usd ~ ., state.specification = ssc, 
+                  data = btcds, 
+                  niter = 10000,
+                  seed = 2021,
+                  prior=prior, # empirical prior, number of variables included in here already 
+                  ping=1000)
+plot(LLTTIS_SS, "coef")
+burn_LLTTIS_SS <- SuggestBurn(0.1, LLTTIS_SS)
+
+
+#Calculate the inclusion probabilities. Maybe some other statistics we want to report more
+inclusionprobs_LLTTIS_SS <- melt(colMeans(LLTTIS_SS$coefficients[-(1:burn),] != 0))
+#calculate the mean of coefficents and take them as the prior means
+inclusionprobs_LLTTIS_SS$mean <- colMeans(LLTTIS_SS$coefficients)
+inclusionprobs_LLTTIS_SS$Variable <- as.character(row.names(inclusionprobs_LLTTIS_SS))
+
+mean_coef_LLTTIS_SS <- colMeans(LLTTIS_SS$coefficients)
+q_2.5 <- matrixStats::colQuantiles(LLTTIS_SS$coefficients, probs = c(0.025))
+q_97.5 <- matrixStats::colQuantiles(LLTTIS_SS$coefficients, probs = c(0.975))
+inclusionprobs_LLTTIS_SS$Variable <- c("Intercept","Confirmation time", "Exchange trade volume", "Hash rate", "Trans excl. popular", "My wallet trans.", "VIX", "S&P500", "Gold price", "Silver price", "Bearish", "Yuan-USD exchange rate", "GBP-USD exchange rate", "RUB-USD exchange rate", "United States", "China", "Nigeria", "South Africa", "Venezuela", "Colombia", "Bolivia","Corona", "Elon Musk")
+
+mean_coef_LLTTIS_SS <- 
+  tibble(
+    Variable = inclusionprobs_LLTTIS_SS$Variable,
+    Mean = round(mean_coef_LLTTIS_SS, 3),
+    quantile_2.5 = round(q_2.5, 3),
+    quantile_97.5 = round(q_97.5,3),
+    Inclusion_probability = round(inclusionprobs_LLTTIS_SS$value, 3)
+  )
+gt_tbl <- gt(mean_coef_LLTTIS_SS)
+
+
+gt_tbl <- 
+  gt_tbl %>%
+  cols_label(
+    quantile_2.5 = html("2.5%"),
+    quantile_97.5 = html("97.5%"),
+    Inclusion_probability = html("Inclusion probability")
+  )
+
+#LLTRTV
+btc_z <- read.zoo(btc)
+btcds <- scale(btc_z)
+LLTTV <- AddLocalLinearTrend(list(), btcds$btc_usd)
+LLTTV_dyn <- AddDynamicRegression(LLTTV,btcds$btc_usd ~ btcds$vix+btcds$gold+ btcds$silver+ btcds$rub_usd+ btcds$yuan_usd+btcds$sp500)
+model_LLTTV_dyn <- bsts(btcds$btc_usd, state.specification = LLTTV_dyn, niter = 10000, seed = 2021)
+burn_LLTTV_dyn <- SuggestBurn(0.1, model_LLTTV_dyn)
+
+coef_LLTTV_dyn <- model_LLTTV_dyn$dynamic.regression.coefficients
+coef_LLTTV_dyn2 <- plyr::alply(.data=coef_LLTTV_dyn,.margins = 2)
+names(coef_LLTTV_dyn2) <- c("vix","gold","silver","rub_usd","yuan_usd","sp500")
+
+dyn.coef.stats2.LLTTV=purrr::map(coef_LLTTV_dyn2, .f=function(x){
+  mean=colMeans(x)
+  sd=matrixStats::colSds(x)
+  q_5=matrixStats::colQuantiles(x, probs=c(0.05))
+  q_95=matrixStats::colQuantiles(x, probs=c(0.95))
+  date=index(btc_z)
+  return(tibble(date, mean, sd, q_5, q_95))
+}) %>%
+  bind_rows(.id="variable")
+
+
+#plot external variables
+dyn.coef.stats2.LLTTV %>%
+  filter(grepl("gold|silver|sp500|vix|yuan|rub", variable)) %>%
+  ggplot(aes(x=date))+
+  geom_ribbon(aes(ymin=q_5, ymax=q_95), fill="grey", alpha=.8)+ #"#03CBD6"
+  geom_line(aes(y=mean), colour="black")+
+  facet_wrap(~variable, scales = "free_y", ncol = 2) +
+  labs(x="Date", y="Marginal posterior mean")+
+  geom_hline(yintercept = 0, colour="red", linetype="dashed") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  theme_bw()
+
+fit_LLTTV_dyn <-  (sd(btc_z$btc_usd)*c(as.numeric(-colMeans(model_LLTTV_dyn$one.step.prediction.errors[-(1:burn_LLTTV_dyn),])+btcds$btc_usd)))+mean(btc_z$btc_usd , na.rm = T)
+#err_llrwp <- as.numeric(colMeans(model_llr$one.step.prediction.errors[-(1:burn_llr),]))
+#burn_llr_dyn <- SuggestBurn(0.1, model_llr_dyn)
+act_LLTTV_dyn <- btc_z$btc_usd
+err_LLTTV_dyn <- act_LLTTV_dyn-fit_LLTTV_dyn
+plot(err_LLTTV_dyn)
+#Calculate ERROR MEASURES
+MAPE_LLTTV_dyn <- mean(abs(err_LLTTV_dyn/act_LLTTV_dyn))  #0.03490257
+MSE_LLTTV_dyn <- sqrt(mean((err_LLTTV_dyn)^2)) #SMAPE_llrwp <- mean(2*abs(err_llrwp)/(act_llrwp+fit_llrwp)) 773.7791
+SMAPE_LLTTV_dyn <- mean(2*abs(err_LLTTV_dyn)/(act_LLTTV_dyn+fit_LLTTV_dyn ))#0.03491764
+MAE_LLTTV_dyn <- mae(act_LLTTV_dyn, fit_LLTTV_dyn) #381.6342
+
+#dynamic regression Corona
+btc_corona <- window(btc_z$btc_usd, start = as.Date("2020-01-16"), end = as.Date("2021-06-01"))
+corona <- window(btc_z$Corona, start = as.Date("2020-01-16"), end = as.Date("2021-06-01"))
+corona_cbind <- cbind(btc_corona, corona)
+corona_z <- as.zoo(corona_cbind)
+
+corona_centered <- scale(corona_z)
+ssllr_corona <- AddLocalLinearTrend(list(), btc_corona)
+ssllr_cor <- AddDynamicRegression(ssllr_corona,corona_centered$btc_corona ~ corona)
+model_ssllr_cor <- bsts(btc_corona, state.specification = ssllr_cor, niter = 10000, seed = 2021)
+burn_ssllr_cor <- SuggestBurn(0.1, model_ssllr_cor)
+coef_cor <- model_ssllr_cor$dynamic.regression.coefficients
+coef_cor2 <- plyr::alply(.data=coef_cor,.margins = 2)
+names(coef_cor2) <- c("Corona")
+#plot(model_ssllr_cor, "dynamic", burn = burn_ssllr_cor)
+
+dyn.coef.stats.cor=purrr::map(coef_cor2, .f=function(x){
+  mean=colMeans(x)
+  sd=matrixStats::colSds(x)
+  q_2.5=matrixStats::colQuantiles(x, probs=c(0.025))
+  q_97.5=matrixStats::colQuantiles(x, probs=c(0.975))
+  date=index(corona_z)
+  return(tibble(date, mean, sd, q_2.5, q_97.5))
+}) %>%
+  bind_rows(.id="variable")
+
+dyn.coef.stats.cor %>%
+  ggplot(aes(x=date))+
+  geom_ribbon(aes(ymin=q_2.5, ymax=q_97.5), fill="grey", alpha=.8)+ #"#03CBD6"
+  geom_line(aes(y=mean), colour="black")+
+  facet_wrap(~variable, scales = "free_y", ncol = 2) +
+  labs(x="Date", y="Marginal posterior mean")+
+  geom_hline(yintercept = 0, colour="red", linetype="dashed") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  theme_bw()
+
+
+#dynamic regression Elon
+btcact_Elon <- window(btc_z$btc_usd, start = as.Date("2020-12-20"), end = as.Date("2021-06-01"))
+elon <- window(btc_z$Elon, start = as.Date("2020-12-20"), end = as.Date("2021-06-01"))
+elon_cbind <- cbind(btcact_Elon, elon)
+elon_z <- as.zoo(elon_cbind)
+
+elon_centered <- scale(elon_z)
+ssllr_elon_tr <- AddLocalLinearTrend(list(), btcact_Elon)
+ssllr_elon <- AddDynamicRegression(ssllr_elon_tr,elon_centered$btcact_Elon ~ elon_centered$elon)
+model_ssllr_elon <- bsts(btcact_Elon, state.specification = ssllr_elon, niter = 10000, seed = 2021)
+burn_ssllr_elon <- SuggestBurn(0.1, model_ssllr_elon)
+coef_elon <- model_ssllr_elon$dynamic.regression.coefficients
+coef_elon2 <- plyr::alply(.data=coef_elon,.margins = 2)
+names(coef_elon2) <- c("Elon")
+dyn.coef.stats.elon=purrr::map(coef_elon2, .f=function(x){
+  mean=colMeans(x)
+  sd=matrixStats::colSds(x)
+  q_5=matrixStats::colQuantiles(x, probs=c(0.05))
+  q_95=matrixStats::colQuantiles(x, probs=c(0.95))
+  date=index(elon_z)
+  return(tibble(date, mean, sd, q_5, q_95))
+}) %>%
+  bind_rows(.id="variable")
+
+dyn.coef.stats.elon %>%
+  ggplot(aes(x=date))+
+  geom_ribbon(aes(ymin=q_5, ymax=q_95), fill="grey", alpha=.8)+ #"#03CBD6"
+  geom_line(aes(y=mean), colour="black")+
+  facet_wrap(~variable, scales = "free_y", ncol = 2) +
+  labs(x="Date", y="Marginal posterior mean")+
+  geom_hline(yintercept = 0, colour="red", linetype="dashed") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  theme_bw()
+
+#LLTTVS
+LLTTVS <- AddLocalLinearTrend(list(), btcds$btc_usd)
+LLTTVS_dyn <- AddDynamicRegression(LLTTVS,btcds$btc_usd ~ btcds$atrct+btcds$vix+ btcds$trvou+ btcds$hrate+ btcds$ntrep+ btcds$mwtrv
+                                   + btcds$gold+ btcds$silver+ btcds$rub_usd+ btcds$yuan_usd+ btcds$gbp_usd+ btcds$bearish+ btcds$sp500
+                                   + btcds$United_States+ btcds$China+ btcds$Nigeria+ btcds$South.Africa+ btcds$Venezuela+ btcds$Colombia+ btcds$Bolivia + btcds$Corona + btcds$Elon)
+model_LLTTVS_dyn <- bsts(btcds$btc_usd, state.specification = LLTTVS_dyn, niter = 10000, seed = 2021)
+burn_LLTTVS_dyn <- SuggestBurn(0.1, model_LLTTVS_dyn)
+
+#calculating errors
+fit_LLTTVS_dyn <- (sd(btc_z$btc_usd)*c(as.numeric(-colMeans(model_LLTTVS_dyn$one.step.prediction.errors[-(1:burn_LLTTVS_dyn),])+btcds$btc_usd)))+mean(btc_z$btc_usd , na.rm = T)
+act_LLTTVS_dyn <- btc_z$btc_usd
+err_LLTTVS_dyn <- act_LLTTVS_dyn-fit_LLTTVS_dyn
+plot(err_LLTTVS_dyn)
+#Calculate ERROR MEASURES
+MAPE_LLTTVS_dyn <- mean(abs(err_LLTTVS_dyn/act_LLTTVS_dyn))   
+MSE_LLTTVS_dyn <- sqrt(mean((err_LLTTVS_dyn)^2))  
+SMAPE_LLTTVS_dyn <- mean(2*abs(err_LLTTVS_dyn)/(act_LLTTVS_dyn+fit_LLTTVS_dyn )) 
+MAE_LLTTVS_dyn <- mae(act_LLTTVS_dyn, fit_LLTTVS_dyn) 
+
+#LLTVS
+btcds <- scale(btc_z)
+LLTVS <- AddLocalLevel(list(), btcds$btc_usd)
+LLTVS_dyn <- AddDynamicRegression(LLTVS,btcds$btc_usd ~ btcds$atrct+btcds$vix+ btcds$trvou+ btcds$hrate+ btcds$ntrep+ btcds$mwtrv
+                                  + btcds$gold+ btcds$silver+ btcds$rub_usd+ btcds$yuan_usd+ btcds$gbp_usd+ btcds$bearish+ btcds$sp500
+                                  + btcds$United_States+ btcds$China+ btcds$Nigeria+ btcds$South.Africa+ btcds$Venezuela+ btcds$Colombia+ btcds$Bolivia + btcds$Corona + btcds$Elon)
+model_LLTVS_dyn <- bsts(btcds$btc_usd, state.specification = LLTVS_dyn, niter = 10000, seed = 2021)
+burn_LLTVS_dyn <- SuggestBurn(0.1, model_LLTVS_dyn)
+#errors
+fit_LLTVS_dyn <-  (sd(btc_z$btc_usd)*c(as.numeric(-colMeans(model_LLTVS_dyn$one.step.prediction.errors[-(1:burn_LLTVS_dyn),])+btcds$btc_usd)))+mean(btc_z$btc_usd , na.rm = T)
+act_LLTVS_dyn <- btc_z$btc_usd
+err_LLTVS_dyn <- act_LLTVS_dyn-fit_LLTVS_dyn
+plot(err_LLTVS_dyn)
+#Calculate ERROR MEASURES
+MAPE_LLTVS_dyn <- mean(abs(err_LLTVS_dyn/act_LLTVS_dyn))   
+MSE_LLTVS_dyn <- sqrt(mean((err_LLTVS_dyn)^2))  
+SMAPE_LLTVS_dyn <- mean(2*abs(err_LLTVS_dyn)/(act_LLTVS_dyn+fit_LLTVS_dyn )) 
+MAE_LLTVS_dyn <- mae(act_LLTVS_dyn, fit_LLTVS_dyn) 
+
+#LLTTV
+LLTTV <- AddLocalLinearTrend(list(), btcds$btc_usd)
+LLTTV_dyn <- AddDynamicRegression(LLTTV,btcds$btc_usd ~ btcds$atrct+btcds$vix+ btcds$trvou+ btcds$hrate+ btcds$ntrep+ btcds$mwtrv
+                                  + btcds$gold+ btcds$silver+ btcds$rub_usd+ btcds$yuan_usd+ btcds$gbp_usd+ btcds$bearish+ btcds$sp500
+                                  + btcds$United_States+ btcds$China+ btcds$Nigeria+ btcds$South.Africa+ btcds$Venezuela+ btcds$Colombia+ btcds$Bolivia)
+model_LLTTV_dyn <- bsts(btcds$btc_usd, state.specification = LLTTV_dyn, niter = 10000, seed = 2021)
+burn_LLTTV_dyn <- SuggestBurn(0.1, model_LLTTV_dyn)
+
+#calculating errors
+fit_LLTTV_dyn <-  (sd(btc_z$btc_usd)*c(as.numeric(-colMeans(model_LLTTV_dyn$one.step.prediction.errors[-(1:burn_LLTTV_dyn),])+btcds$btc_usd)))+mean(btc_z$btc_usd , na.rm = T)
+act_LLTTV_dyn <- btc_z$btc_usd
+err_LLTTV_dyn <- act_LLTTV_dyn-fit_LLTTV_dyn
+plot(err_LLTTV_dyn)
+#Calculate ERROR MEASURES
+MAPE_LLTTV_dyn <- mean(abs(err_LLTTV_dyn/act_LLTTV_dyn))   
+MSE_LLTTV_dyn <- sqrt(mean((err_LLTTV_dyn)^2))  
+SMAPE_LLTTV_dyn <- mean(2*abs(err_LLTTV_dyn)/(act_LLTTV_dyn+fit_LLTTV_dyn )) 
+MAE_LLTTV_dyn <- mae(act_LLTTV_dyn, fit_LLTTV_dyn) 
+
+
+#LLTV
+btcds <- scale(btc_z)
+LLTV <- AddLocalLevel(list(), btcds$btc_usd)
+LLTV_dyn <- AddDynamicRegression(LLTV,btcds$btc_usd ~ btcds$atrct+btcds$vix+ btcds$trvou+ btcds$hrate+ btcds$ntrep+ btcds$mwtrv
+                                 + btcds$gold+ btcds$silver+ btcds$rub_usd+ btcds$yuan_usd+ btcds$gbp_usd+ btcds$bearish+ btcds$sp500
+                                 + btcds$United_States+ btcds$China+ btcds$Nigeria+ btcds$South.Africa+ btcds$Venezuela+ btcds$Colombia+ btcds$Bolivia)
+model_LLTV_dyn <- bsts(btcds$btc_usd, state.specification = LLTV_dyn, niter = 10000, seed = 2021)
+burn_LLTV_dyn <- SuggestBurn(0.1, model_LLTV_dyn)
+
+fit_LLTV_dyn <-  (sd(btc_z$btc_usd)*c(as.numeric(-colMeans(model_LLTV_dyn$one.step.prediction.errors[-(1:burn_LLTV_dyn),])+btcds$btc_usd)))+mean(btc_z$btc_usd , na.rm = T)
+act_LLTV_dyn <- btc_z$btc_usd
+err_LLTV_dyn <- act_LLTV_dyn-fit_LLTV_dyn
+plot(err_LLTV_dyn)
+#Calculate ERROR MEASURES
+MAPE_LLTV_dyn <- mean(abs(err_LLTV_dyn/act_LLTV_dyn))   
+MSE_LLTV_dyn <- sqrt(mean((err_LLTV_dyn)^2))  
+SMAPE_LLTV_dyn <- mean(2*abs(err_LLTV_dyn)/(act_LLTV_dyn+fit_LLTV_dyn )) 
+MAE_LLTV_dyn <- mae(act_LLTV_dyn, fit_LLTV_dyn) 
+
+#LLRTVS
+LLRTVS <- AddLocalLevel(list(), btcds$btc_usd)
+LLRTVS_dyn <- AddDynamicRegression(LLRTVS,btcds$btc_usd ~ btcds$vix+btcds$gold+ btcds$silver+ btcds$rub_usd+ btcds$yuan_usd+btcds$sp500 + btcds$Corona + btcds$Elon)
+model_LLRTVS_dyn <- bsts(btcds$btc_usd, state.specification = LLRTVS_dyn, niter = 10000, seed = 2021)
+burn_LLRTVS_dyn <- SuggestBurn(0.1, model_LLRTVS_dyn)
+
+fit_LLRTVS_dyn <-  (sd(btc_z$btc_usd)*c(as.numeric(-colMeans(model_LLRTVS_dyn$one.step.prediction.errors[-(1:burn_LLRTVS_dyn),])+btcds$btc_usd)))+mean(btc_z$btc_usd , na.rm = T)
+act_LLRTVS_dyn <- btc_z$btc_usd
+err_LLRTVS_dyn <- act_LLRTVS_dyn-fit_LLRTVS_dyn
+plot(err_LLRTVS_dyn)
+#Calculate ERROR MEASURES
+MAPE_LLRTVS_dyn <- mean(abs(err_LLRTVS_dyn/act_LLRTVS_dyn))   
+MSE_LLRTVS_dyn <- sqrt(mean((err_LLRTVS_dyn)^2))  
+SMAPE_LLRTVS_dyn <- mean(2*abs(err_LLRTVS_dyn)/(act_LLRTVS_dyn+fit_LLRTVS_dyn )) 
+MAE_LLRTVS_dyn <- mae(act_LLRTVS_dyn, fit_LLRTVS_dyn) 
+
+#LLTRTVS
+LLTRTVS <- AddLocalLinearTrend(list(), btcds$btc_usd)
+LLTRTVS_dyn <- AddDynamicRegression(LLTRTVS,btcds$btc_usd ~ btcds$vix+btcds$gold+ btcds$silver+ btcds$rub_usd+ btcds$yuan_usd+btcds$sp500 + btcds$Corona + btcds$Elon)
+model_LLTRTVS_dyn <- bsts(btcds$btc_usd, state.specification = LLTRTVS_dyn, niter = 10000, seed = 2021)
+burn_LLTRTVS_dyn <- SuggestBurn(0.1, model_LLTRTVS_dyn)
+
+fit_LLTRTVS_dyn <-  (sd(btc_z$btc_usd)*c(as.numeric(-colMeans(model_LLTRTVS_dyn$one.step.prediction.errors[-(1:burn_LLTRTVS_dyn),])+btcds$btc_usd)))+mean(btc_z$btc_usd , na.rm = T)
+act_LLTRTVS_dyn <- btc_z$btc_usd
+err_LLTRTVS_dyn <- act_LLTRTVS_dyn-fit_LLTRTVS_dyn
+plot(err_LLTRTVS_dyn)
+#Calculate ERROR MEASURES
+MAPE_LLTRTVS_dyn <- mean(abs(err_LLTRTVS_dyn/act_LLTRTVS_dyn))   
+MSE_LLTRTVS_dyn <- sqrt(mean((err_LLTRTVS_dyn)^2))  
+SMAPE_LLTRTVS_dyn <- mean(2*abs(err_LLTRTVS_dyn)/(act_LLTRTVS_dyn+fit_LLTRTVS_dyn )) 
+MAE_LLTRTVS_dyn <- mae(act_LLTRTVS_dyn, fit_LLTRTVS_dyn) 
+
+#LLRTV
+LLRTV <- AddLocalLevel(list(), btcds$btc_usd)
+LLRTV_dyn <- AddDynamicRegression(LLRTV,btcds$btc_usd ~ btcds$vix+btcds$gold+ btcds$silver+ btcds$rub_usd+ btcds$yuan_usd+btcds$sp500)
+model_LLRTV_dyn <- bsts(btcds$btc_usd, state.specification = LLRTV_dyn, niter = 10000, seed = 2021)
+burn_LLRTV_dyn <- SuggestBurn(0.1, model_LLRTV_dyn)
+
+fit_LLRTV_dyn <-  (sd(btc_z$btc_usd)*c(as.numeric(-colMeans(model_LLRTV_dyn$one.step.prediction.errors[-(1:burn_LLRTV_dyn),])+btcds$btc_usd)))+mean(btc_z$btc_usd , na.rm = T)
+act_LLRTV_dyn <- btc_z$btc_usd
+err_LLRTV_dyn <- act_LLRTV_dyn-fit_LLRTV_dyn
+plot(err_LLRTV_dyn)
+#Calculate ERROR MEASURES
+MAPE_LLRTV_dyn <- mean(abs(err_LLRTV_dyn/act_LLRTV_dyn))   
+MSE_LLRTV_dyn <- sqrt(mean((err_LLRTV_dyn)^2))  
+SMAPE_LLRTV_dyn <- mean(2*abs(err_LLRTV_dyn)/(act_LLRTV_dyn+fit_LLRTV_dyn )) 
+MAE_LLRTV_dyn <- mae(act_LLRTV_dyn, fit_LLRTV_dyn)
